@@ -1,0 +1,6 @@
+useDynLib("grc")
+
+export("GRC")
+export("RKM")
+export("FKM")
+
