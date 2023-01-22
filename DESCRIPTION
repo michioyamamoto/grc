@@ -1,0 +1,13 @@
+Package: grc
+Type: Package
+Title: Generalized Reduced Clustering Analysis
+Version: 0.8
+Date: 2022-12-10
+Author: Michio Yamamoto
+Maintainer: Michio Yamamoto <michio.koko@gmail.com>
+Suggests: parallel
+Description: This package conducts the generalized reduced clustering analysis developed by Yamamoto and Hwang (2014).
+License: GPL (>= 2)
+URL: http://michioyamamoto.com
+Repository: CRAN
+
