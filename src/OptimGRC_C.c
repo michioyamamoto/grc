@@ -5,11 +5,12 @@
 //  ファイル内容：
 //  作成者：YAMAMOTO, Michio
 //  作成日：2013年09月16日
-//  最終更新日：2022年12月10日
+//  最終更新日：2023年8月3日
 //  コメント：N.comp==N.comp1 or notで分岐しておく
 //           K-meansの部分はとりあえずLloydのアルゴリズムで利用することにした
 //           k-meansのところでn_random_kmeans==1の場合のクラスター中心行列の部分を修正した（150214）
 //           package公開のために最終確認 (221210)
+//           F77_CALLと FCONE FCONEを追記した (230803)
 //☆★☆★☆★☆★☆★☆★☆★☆★☆★☆★☆★☆★☆★☆★
 #include <stdlib.h>
 #include <time.h> /* timeによる乱数の初期化のため */
@@ -18,6 +19,10 @@
 #include <R_ext/Parse.h>
 #include <R_ext/Lapack.h>
 
+#ifndef FCONE
+# define FCONE
+#endif
+  
 void f_identity(int N, double *I);
 void f_grad(double *X, int row1, int col1, double *U, int row2, int col2, double *A, int row3, int col3, int N_comp1, int N_comp2, double rho1, double rho2, double *G);
 double f_lossfunc(double *X, int row1, int col1, double *U, int row2, int col2, double *A, int row3, int col3, int N_comp1, int N_comp2, double rho1, double rho2);
@@ -145,7 +150,8 @@ SEXP OptimGRC_C (SEXP X, SEXP U, SEXP A, SEXP INFO)
 	  /*          Uの更新          */
 	  /*****************************/
 	  /* F1を計算しておく*/
-	  dgemm_("N", "N", &N_sub, &N_comp1, &N_var, &blas_one, REAL(X), &N_sub, REAL(A), &N_var, &blas_zero, F1, &N_sub); // F1 = X %*% A1
+	  // dgemm_("N", "N", &N_sub, &N_comp1, &N_var, &blas_one, REAL(X), &N_sub, REAL(A), &N_var, &blas_zero, F1, &N_sub); // F1 = X %*% A1
+    F77_CALL(dgemm)("N", "N", &N_sub, &N_comp1, &N_var, &blas_one, REAL(X), &N_sub, REAL(A), &N_var, &blas_zero, F1, &N_sub FCONE FCONE); // F1 = X %*% A1
 
 	  // 複数初期値を用いてkmeans_Lloyd実行する
 	  n_random_kmeans = 0;
@@ -174,20 +180,20 @@ SEXP OptimGRC_C (SEXP X, SEXP U, SEXP A, SEXP INFO)
 	  	}
 	  	/* クラスター中心行列Fcの作成 */
 		if (n_ite > 1 && n_random_kmeans == 1) {
-		  dgemm_("T", "N", &N_clust, &N_var, &N_sub, &blas_one, REAL(U), &N_sub, REAL(X), &N_sub, &blas_zero, Mat_cv, &N_clust); //t(U) %*% X
-		  dgemm_("N", "N", &N_clust, &N_comp1, &N_var, &blas_one, Mat_cv, &N_clust, REAL(A), &N_var, &blas_zero, Fc, &N_clust); //t(U) %*% X %*% A
-		  dgemm_("T", "N", &N_clust, &N_clust, &N_sub, &blas_one, REAL(U), &N_sub, REAL(U), &N_sub, &blas_zero, Mat_cc, &N_clust); //t(U) %*% U
+		  F77_CALL(dgemm)("T", "N", &N_clust, &N_var, &N_sub, &blas_one, REAL(U), &N_sub, REAL(X), &N_sub, &blas_zero, Mat_cv, &N_clust FCONE FCONE); //t(U) %*% X
+		  F77_CALL(dgemm)("N", "N", &N_clust, &N_comp1, &N_var, &blas_one, Mat_cv, &N_clust, REAL(A), &N_var, &blas_zero, Fc, &N_clust FCONE FCONE); //t(U) %*% X %*% A
+		  F77_CALL(dgemm)("T", "N", &N_clust, &N_clust, &N_sub, &blas_one, REAL(U), &N_sub, REAL(U), &N_sub, &blas_zero, Mat_cc, &N_clust FCONE FCONE); //t(U) %*% U
 		  for (i = 0; i < N_clust; i++) //solve(t(U) %*% U)
-			Mat_cc[i + i * N_clust] = 1 / Mat_cc[i + i * N_clust];
-		  dgemm_("N", "N", &N_clust, &N_comp1, &N_clust, &blas_one, Mat_cc, &N_clust, Fc, &N_clust, &blas_zero, Mat_cv, &N_clust); //solve(t(U) %*% U) %*% t(U) %*% X %*% A
+			  Mat_cc[i + i * N_clust] = 1 / Mat_cc[i + i * N_clust];
+		  F77_CALL(dgemm)("N", "N", &N_clust, &N_comp1, &N_clust, &blas_one, Mat_cc, &N_clust, Fc, &N_clust, &blas_zero, Mat_cv, &N_clust FCONE FCONE); //solve(t(U) %*% U) %*% t(U) %*% X %*% A
 		  for (k = 0; k < N_clust; k++)
-			for (l = 0; l < N_comp; l++)
-			  Fc[k + N_clust * l] = Mat_cv[k + N_clust * l];
+			  for (l = 0; l < N_comp; l++)
+			    Fc[k + N_clust * l] = Mat_cv[k + N_clust * l];
 		}
 		else {
 		  for (k = 0; k < N_clust; k++)
-			for (l = 0; l < N_comp; l++)
-			  Fc[k + N_clust * l] = F1[aRandValArray[k] + N_sub * l];
+			  for (l = 0; l < N_comp; l++)
+			    Fc[k + N_clust * l] = F1[aRandValArray[k] + N_sub * l];
 		}
 
 	  	//x: データ行列, m: N.sub, p: N.var, centers: クラスター初期値行列, k: N.clust, c1: integer(N.sub), iter: N.ite, nc: N.clust, wss: double(k)
@@ -218,11 +224,11 @@ SEXP OptimGRC_C (SEXP X, SEXP U, SEXP A, SEXP INFO)
 	  /*          Aの更新          */
 	  /*****************************/
 	  /* 固有値分解による更新 */
-	  dgemm_("T", "N", &N_clust, &N_clust, &N_sub, &blas_one, REAL(U), &N_sub, REAL(U), &N_sub, &blas_zero, Mat_cc, &N_clust); //t(U) %*% U
+	  F77_CALL(dgemm)("T", "N", &N_clust, &N_clust, &N_sub, &blas_one, REAL(U), &N_sub, REAL(U), &N_sub, &blas_zero, Mat_cc, &N_clust FCONE FCONE); //t(U) %*% U
 	  for (i = 0; i < N_clust; i++) //solve(t(U) %*% U)
 	  	Mat_cc[i + i * N_clust] = 1 / Mat_cc[i + i * N_clust];
-	  dgemm_("N", "T", &N_clust, &N_sub, &N_clust, &blas_one, Mat_cc, &N_clust, REAL(U), &N_sub, &blas_zero, Mat_cs, &N_clust); //solve(t(U) %*% U) %*% t(U)
-	  dgemm_("N", "N", &N_sub, &N_sub, &N_clust, &blas_one, REAL(U), &N_sub, Mat_cs, &N_clust, &blas_zero, Mat_ss, &N_sub); //U %*% solve(t(U) %*% U) %*% t(U)
+	  F77_CALL(dgemm)("N", "T", &N_clust, &N_sub, &N_clust, &blas_one, Mat_cc, &N_clust, REAL(U), &N_sub, &blas_zero, Mat_cs, &N_clust FCONE FCONE); //solve(t(U) %*% U) %*% t(U)
+	  F77_CALL(dgemm)("N", "N", &N_sub, &N_sub, &N_clust, &blas_one, REAL(U), &N_sub, Mat_cs, &N_clust, &blas_zero, Mat_ss, &N_sub FCONE FCONE); //U %*% solve(t(U) %*% U) %*% t(U)
 
 	  /* (1 - rho1) * I_N + (rho1 - rho2) * P_U */
 	  for (i = 0; i < N_sub; i++) {
@@ -235,9 +241,9 @@ SEXP OptimGRC_C (SEXP X, SEXP U, SEXP A, SEXP INFO)
 	  	}
 	  }
 
-	  dgemm_("T", "N", &N_var, &N_sub, &N_sub, &blas_one, REAL(X), &N_sub, Mat_ss, &N_sub, &blas_zero, Mat_vs, &N_var); // X' %*% ((1 - rho1) * I_N + (rho1 - rho2) * P_U)
-	  dgemm_("N", "N", &N_var, &N_var, &N_sub, &blas_one, Mat_vs, &N_var, REAL(X), &N_sub, &blas_zero, Mat_vv, &N_var); // X' %*% ((1 - rho1) * I_N + (rho1 - rho2) * P_U) %*% X
-	  dsyev_("V", "U", &N_var, Mat_vv, &N_var, eigen_value, work, &lwork, &info); /* 固有値が昇順であることに注意 */
+	  F77_CALL(dgemm)("T", "N", &N_var, &N_sub, &N_sub, &blas_one, REAL(X), &N_sub, Mat_ss, &N_sub, &blas_zero, Mat_vs, &N_var FCONE FCONE); // X' %*% ((1 - rho1) * I_N + (rho1 - rho2) * P_U)
+	  F77_CALL(dgemm)("N", "N", &N_var, &N_var, &N_sub, &blas_one, Mat_vs, &N_var, REAL(X), &N_sub, &blas_zero, Mat_vv, &N_var FCONE FCONE); // X' %*% ((1 - rho1) * I_N + (rho1 - rho2) * P_U) %*% X
+	  F77_CALL(dsyev)("V", "U", &N_var, Mat_vv, &N_var, eigen_value, work, &lwork, &info FCONE FCONE); /* 固有値が昇順であることに注意 */
 	  if (info != 0) {
 	  	//	break;
 	  	error(("error code %d from Lapack routine '%s'"), info, "dsyev_");
@@ -275,7 +281,7 @@ SEXP OptimGRC_C (SEXP X, SEXP U, SEXP A, SEXP INFO)
 		for (j = 0; j < N_comp; j++)
 		  if (j < N_comp1)
 			A1[i + j * N_var] = REAL(A)[i + j * N_var];
-	  dgemm_("N", "N", &N_sub, &N_comp1, &N_var, &blas_one, REAL(X), &N_sub, A1, &N_var, &blas_zero, F1, &N_sub); // F1 = X %*% A1
+	  F77_CALL(dgemm)("N", "N", &N_sub, &N_comp1, &N_var, &blas_one, REAL(X), &N_sub, A1, &N_var, &blas_zero, F1, &N_sub FCONE FCONE); // F1 = X %*% A1
 	  // 複数初期値を用いてkmeans_Lloyd実行する
 	  n_random_kmeans = 0;
 	  wss_best = 1.0E+100;
@@ -302,15 +308,15 @@ SEXP OptimGRC_C (SEXP X, SEXP U, SEXP A, SEXP INFO)
 	  	}
 	  	/* クラスター中心行列Fcの作成 */
 		if (n_ite > 1 && n_random_kmeans == 1) {
-		  dgemm_("T", "N", &N_clust, &N_var, &N_sub, &blas_one, REAL(U), &N_sub, REAL(X), &N_sub, &blas_zero, Mat_cv, &N_clust); //t(U) %*% X
-		  dgemm_("N", "N", &N_clust, &N_comp1, &N_var, &blas_one, Mat_cv, &N_clust, A1, &N_var, &blas_zero, Fc, &N_clust); //t(U) %*% X %*% A1
-		  dgemm_("T", "N", &N_clust, &N_clust, &N_sub, &blas_one, REAL(U), &N_sub, REAL(U), &N_sub, &blas_zero, Mat_cc, &N_clust); //t(U) %*% U
+		  F77_CALL(dgemm)("T", "N", &N_clust, &N_var, &N_sub, &blas_one, REAL(U), &N_sub, REAL(X), &N_sub, &blas_zero, Mat_cv, &N_clust FCONE FCONE); //t(U) %*% X
+		  F77_CALL(dgemm)("N", "N", &N_clust, &N_comp1, &N_var, &blas_one, Mat_cv, &N_clust, A1, &N_var, &blas_zero, Fc, &N_clust FCONE FCONE); //t(U) %*% X %*% A1
+		  F77_CALL(dgemm)("T", "N", &N_clust, &N_clust, &N_sub, &blas_one, REAL(U), &N_sub, REAL(U), &N_sub, &blas_zero, Mat_cc, &N_clust FCONE FCONE); //t(U) %*% U
 		  for (i = 0; i < N_clust; i++) //solve(t(U) %*% U)
-			Mat_cc[i + i * N_clust] = 1 / Mat_cc[i + i * N_clust];
-		  dgemm_("N", "N", &N_clust, &N_comp1, &N_clust, &blas_one, Mat_cc, &N_clust, Fc, &N_clust, &blas_zero, Mat_cv, &N_clust); //solve(t(U) %*% U) %*% t(U) %*% X %*% A
+			  Mat_cc[i + i * N_clust] = 1 / Mat_cc[i + i * N_clust];
+		  F77_CALL(dgemm)("N", "N", &N_clust, &N_comp1, &N_clust, &blas_one, Mat_cc, &N_clust, Fc, &N_clust, &blas_zero, Mat_cv, &N_clust FCONE FCONE); //solve(t(U) %*% U) %*% t(U) %*% X %*% A
 		  for (k = 0; k < N_clust; k++)
-			for (l = 0; l < N_comp1; l++)
-			  Fc[k + N_clust * l] = Mat_cv[k + N_clust * l];
+			  for (l = 0; l < N_comp1; l++)
+			    Fc[k + N_clust * l] = Mat_cv[k + N_clust * l];
 		}
 		else {
 		  for (k = 0; k < N_clust; k++)
@@ -490,11 +496,11 @@ void GPAlgorithm(double *X, double *U, double *A, int N_sub, int N_var, int N_co
 	  for (i = 0; i < (N_var * N_comp); i++)
 		A_target[i] = A_current[i];
 
-	  dgemm_("N", "N", &N_var, &N_comp, &N_comp, &scalar, G, &N_var, I_comp, &N_comp, &blas_one, A_target, &N_var); // A - alpha * G
-	  dgesvd_(&jobu, &jobvt, &N_var, &N_comp, A_target, &N_var, singular_value, U_svd, &N_var, Vt_svd, &N_comp, work, &lwork, &info);
+	  F77_CALL(dgemm)("N", "N", &N_var, &N_comp, &N_comp, &scalar, G, &N_var, I_comp, &N_comp, &blas_one, A_target, &N_var FCONE FCONE); // A - alpha * G
+	  F77_CALL(dgesvd)(&jobu, &jobvt, &N_var, &N_comp, A_target, &N_var, singular_value, U_svd, &N_var, Vt_svd, &N_comp, work, &lwork, &info FCONE FCONE);
 	  if (info != 0)
-		error(("error code %d from Lapack routine '%s'"), info, "dgesvd");
-	  dgemm_("N", "N", &N_var, &N_comp, &N_comp, &blas_one, U_svd, &N_var, Vt_svd, &N_comp, &blas_zero, A_new, &N_var); // A.new = U %*% t(V)
+		  error(("error code %d from Lapack routine '%s'"), info, "dgesvd");
+	  F77_CALL(dgemm)("N", "N", &N_var, &N_comp, &N_comp, &blas_one, U_svd, &N_var, Vt_svd, &N_comp, &blas_zero, A_new, &N_var FCONE FCONE); // A.new = U %*% t(V)
 
 	  /* 更新値の目的関数の値を計算しておく */
 	  lossfunc_new = f_lossfunc(X, N_sub, N_var, U, N_sub, N_clust, A_new, N_var, N_comp, N_comp1, N_comp2, rho1, rho2);
@@ -730,42 +736,42 @@ double f_lossfunc(double *X, int row1, int col1, double *U, int row2, int col2, 
   /* Z1 = X - X %*% A %*% t(A) を求める */
   for (i = 0; i < (N_sub * N_var); i++)
 	temp_X[i] = X[i];
-  dgemm_("N", "T", &N_var, &N_var, &N_comp, &blas_one, A, &N_var, A, &N_var, &blas_zero, Mat_vv, &N_var); // A %*% t(A)
-  dgemm_("N", "N", &N_sub, &N_var, &N_var, &blas_minus_one, X, &N_sub, Mat_vv, &N_var, &blas_one, temp_X, &N_sub); // X - X %*% A %*% t(A)
+  F77_CALL(dgemm)("N", "T", &N_var, &N_var, &N_comp, &blas_one, A, &N_var, A, &N_var, &blas_zero, Mat_vv, &N_var FCONE FCONE); // A %*% t(A)
+  F77_CALL(dgemm)("N", "N", &N_sub, &N_var, &N_var, &blas_minus_one, X, &N_sub, Mat_vv, &N_var, &blas_one, temp_X, &N_sub FCONE FCONE); // X - X %*% A %*% t(A)
   for (i = 0; i < (N_sub * N_var); i++) // Z1 = X - X %*% A %*% t(A)
-	Z1[i] = temp_X[i];
+	  Z1[i] = temp_X[i];
 
   /* Z2 = X %*% A1 - U %*% solve(t(U) %*% U) %*% t(U) %*% X %*% A1 を求める */
-  dgemm_("N", "N", &N_sub, &N_comp1, &N_var, &blas_one, X, &N_sub, A1, &N_var, &blas_zero, Mat_sa1, &N_sub); //X %*% A1
+  F77_CALL(dgemm)("N", "N", &N_sub, &N_comp1, &N_var, &blas_one, X, &N_sub, A1, &N_var, &blas_zero, Mat_sa1, &N_sub FCONE FCONE); //X %*% A1
   for (i = 0; i < (N_sub * N_comp1); i++)
-	Mat_sa1_2[i] = Mat_sa1[i];
-  dgemm_("T", "N", &N_clust, &N_clust, &N_sub, &blas_one, U, &N_sub, U, &N_sub, &blas_zero, Mat_cc, &N_clust); //t(U) %*% U
+	  Mat_sa1_2[i] = Mat_sa1[i];
+  F77_CALL(dgemm)("T", "N", &N_clust, &N_clust, &N_sub, &blas_one, U, &N_sub, U, &N_sub, &blas_zero, Mat_cc, &N_clust FCONE FCONE); //t(U) %*% U
   for (i = 0; i < N_clust; i++) //solve(t(U) %*% U)
   	Mat_cc[i + i * N_clust] = 1 / Mat_cc[i + i * N_clust];
-  dgemm_("N", "T", &N_clust, &N_sub, &N_clust, &blas_one, Mat_cc, &N_clust, U, &N_sub, &blas_zero, Mat_cs, &N_clust); //solve(t(U) %*% U) %*% t(U)
-  dgemm_("N", "N", &N_sub, &N_sub, &N_clust, &blas_one, U, &N_sub, Mat_cs, &N_clust, &blas_zero, Mat_ss, &N_sub); //U %*% solve(t(U) %*% U) %*% t(U)
-  dgemm_("N", "N", &N_sub, &N_comp1, &N_sub, &blas_minus_one, Mat_ss, &N_sub, Mat_sa1, &N_sub, &blas_one, Mat_sa1_2, &N_sub); //X %*% A1 - U %*% solve(t(U) %*% U) %*% t(U) %*% X %*% A1
+  F77_CALL(dgemm)("N", "T", &N_clust, &N_sub, &N_clust, &blas_one, Mat_cc, &N_clust, U, &N_sub, &blas_zero, Mat_cs, &N_clust FCONE FCONE); //solve(t(U) %*% U) %*% t(U)
+  F77_CALL(dgemm)("N", "N", &N_sub, &N_sub, &N_clust, &blas_one, U, &N_sub, Mat_cs, &N_clust, &blas_zero, Mat_ss, &N_sub FCONE FCONE); //U %*% solve(t(U) %*% U) %*% t(U)
+  F77_CALL(dgemm)("N", "N", &N_sub, &N_comp1, &N_sub, &blas_minus_one, Mat_ss, &N_sub, Mat_sa1, &N_sub, &blas_one, Mat_sa1_2, &N_sub FCONE FCONE); //X %*% A1 - U %*% solve(t(U) %*% U) %*% t(U) %*% X %*% A1
   for (i = 0; i < (N_sub * N_comp1); i++)  //Z2 = X %*% A1 - U %*% solve(t(U) %*% U) %*% t(U) %*% X %*% A1
-	Z2[i] = Mat_sa1_2[i];
+	  Z2[i] = Mat_sa1_2[i];
 
   /* Z3 = U %*% solve(t(U) %*% U) %*% t(U) %*% X %*% A1 */
-  dgemm_("N", "N", &N_sub, &N_comp1, &N_var, &blas_one, X, &N_sub, A1, &N_var, &blas_zero, Mat_sa1, &N_sub); // X %*% A1
-  dgemm_("N", "N", &N_sub, &N_comp1, &N_sub, &blas_one, Mat_ss, &N_sub, Mat_sa1, &N_sub, &blas_zero, Mat_sa1_2, &N_sub); // U %*% solve(t(U) %*% U) %*% t(U) %*% X %*% A1
+  F77_CALL(dgemm)("N", "N", &N_sub, &N_comp1, &N_var, &blas_one, X, &N_sub, A1, &N_var, &blas_zero, Mat_sa1, &N_sub FCONE FCONE); // X %*% A1
+  F77_CALL(dgemm)("N", "N", &N_sub, &N_comp1, &N_sub, &blas_one, Mat_ss, &N_sub, Mat_sa1, &N_sub, &blas_zero, Mat_sa1_2, &N_sub FCONE FCONE); // U %*% solve(t(U) %*% U) %*% t(U) %*% X %*% A1
   for (i = 0; i < (N_sub * N_comp1); i++) // Z3 = U %*% solve(t(U) %*% U) %*% t(U) %*% X %*% A1
-	Z3[i] = Mat_sa1_2[i];
+	  Z3[i] = Mat_sa1_2[i];
 
   /* value of loss function を求める */
-  dgemm_("T", "N", &N_var, &N_var, &N_sub, &blas_one, Z1, &N_sub, Z1, &N_sub, &blas_zero, Mat_vv, &N_var); // t(Z1) %*% Z1
+  F77_CALL(dgemm)("T", "N", &N_var, &N_var, &N_sub, &blas_one, Z1, &N_sub, Z1, &N_sub, &blas_zero, Mat_vv, &N_var FCONE FCONE); // t(Z1) %*% Z1
   for (i = 0; i < N_var; i++)
-	term1 = term1 + Mat_vv[i + i * N_var];
+	  term1 = term1 + Mat_vv[i + i * N_var];
 
-  dgemm_("T", "N", &N_comp1, &N_comp1, &N_sub, &blas_one, Z2, &N_sub, Z2, &N_sub, &blas_zero, Mat_a1a1, &N_comp1); // t(Z2) %*% Z2
+  F77_CALL(dgemm)("T", "N", &N_comp1, &N_comp1, &N_sub, &blas_one, Z2, &N_sub, Z2, &N_sub, &blas_zero, Mat_a1a1, &N_comp1 FCONE FCONE); // t(Z2) %*% Z2
   for (i = 0; i < N_comp1; i++)
-	term2 = term2 + Mat_a1a1[i + i * N_comp1];
+	  term2 = term2 + Mat_a1a1[i + i * N_comp1];
 
-  dgemm_("T", "N", &N_comp1, &N_comp1, &N_sub, &blas_one, Z3, &N_sub, Z3, &N_sub, &blas_zero, Mat_a1a1, &N_comp1); // t(Z3) %*% Z3
+  F77_CALL(dgemm)("T", "N", &N_comp1, &N_comp1, &N_sub, &blas_one, Z3, &N_sub, Z3, &N_sub, &blas_zero, Mat_a1a1, &N_comp1 FCONE FCONE); // t(Z3) %*% Z3
   for (i = 0; i < N_comp1; i++)
-	term3 = term3 + Mat_a1a1[i + i * N_comp1];
+	  term3 = term3 + Mat_a1a1[i + i * N_comp1];
 
   lossfunc = term1 + rho1_local * term2 + rho2_local * term3;
 
@@ -796,13 +802,13 @@ void f_identity(int N, double *I)
 {
   int i, j;
   for (i = 0; i < N; i++) {
-	for (j = 0; j < N; j++) {
-	  if (i == j) {
-		I[j + i * N] = 1;
-	  } else {
-		I[j + i * N] = 0;
-	  }
-	}
+  	for (j = 0; j < N; j++) {
+	    if (i == j) {
+    		I[j + i * N] = 1;
+	    } else {
+    		I[j + i * N] = 0;
+	    }
+  	}
   }
 }
 
@@ -864,30 +870,30 @@ void f_grad(double *X, int row1, int col1, double *U, int row2, int col2, double
   f_identity(N_sub, I_N);
 
   /* Uの列ベクトルが張る空間への射影行列を求める */
-  dgemm_("T", "N", &N_clust, &N_clust, &N_sub, &blas_one, U, &N_sub, U, &N_sub, &blas_zero, temp1, &N_clust); //t(U) %*% U
+  F77_CALL(dgemm)("T", "N", &N_clust, &N_clust, &N_sub, &blas_one, U, &N_sub, U, &N_sub, &blas_zero, temp1, &N_clust FCONE FCONE); //t(U) %*% U
   for (i = 0; i < N_clust; i++) //solve(t(U) %*% U)
   	temp1[i + i * N_clust] = 1 / temp1[i + i * N_clust];
-  dgemm_("N", "T", &N_clust, &N_sub, &N_clust, &blas_one, temp1, &N_clust, U, &N_sub, &blas_zero, temp2, &N_clust); //solve(t(U) %*% U) %*% t(U)
-  dgemm_("N", "N", &N_sub, &N_sub, &N_clust, &blas_one, U, &N_sub, temp2, &N_clust, &blas_zero, temp3, &N_sub); //U %*% solve(t(U) %*% U) %*% t(U)
+  F77_CALL(dgemm)("N", "T", &N_clust, &N_sub, &N_clust, &blas_one, temp1, &N_clust, U, &N_sub, &blas_zero, temp2, &N_clust FCONE FCONE); //solve(t(U) %*% U) %*% t(U)
+  F77_CALL(dgemm)("N", "N", &N_sub, &N_sub, &N_clust, &blas_one, U, &N_sub, temp2, &N_clust, &blas_zero, temp3, &N_sub FCONE FCONE); //U %*% solve(t(U) %*% U) %*% t(U)
 
   /* G1を求める */
-  dgemm_("N", "N", &N_sub, &N_sub, &N_sub, &coef1, I_N, &N_sub, I_N, &N_sub, &coef2, temp3, &N_sub); //(1 - rho1) * diag(N.sub) + (rho1 - rho2) * U %*% solve(t(U) %*% U) %*% t(U)
-  dgemm_("T", "N", &N_var, &N_sub, &N_sub, &blas_one, X, &N_sub, temp3, &N_sub, &blas_zero, temp4, &N_var); //t(X) %*% ((1 - rho1) * diag(N.sub) + (rho1 - rho2) * U %*% solve(t(U) %*% U) %*% t(U))
-  dgemm_("N", "N", &N_var, &N_var, &N_sub, &blas_one, temp4, &N_var, X, &N_sub, &blas_zero, temp5, &N_var); //t(X) %*% ((1 - rho1) * diag(N.sub) + (rho1 - rho2) * U %*% solve(t(U) %*% U) %*% t(U)) %*% X
-  dgemm_("N", "N", &N_var, &N_comp1, &N_var, &blas_one, temp5, &N_var, A1, &N_var, &blas_zero, G1, &N_var); //t(X) %*% ((1 - rho1) * diag(N.sub) + (rho1 - rho2) * U %*% solve(t(U) %*% U) %*% t(U)) %*% X %*% A1
+  F77_CALL(dgemm)("N", "N", &N_sub, &N_sub, &N_sub, &coef1, I_N, &N_sub, I_N, &N_sub, &coef2, temp3, &N_sub FCONE FCONE); //(1 - rho1) * diag(N.sub) + (rho1 - rho2) * U %*% solve(t(U) %*% U) %*% t(U)
+  F77_CALL(dgemm)("T", "N", &N_var, &N_sub, &N_sub, &blas_one, X, &N_sub, temp3, &N_sub, &blas_zero, temp4, &N_var FCONE FCONE); //t(X) %*% ((1 - rho1) * diag(N.sub) + (rho1 - rho2) * U %*% solve(t(U) %*% U) %*% t(U))
+  F77_CALL(dgemm)("N", "N", &N_var, &N_var, &N_sub, &blas_one, temp4, &N_var, X, &N_sub, &blas_zero, temp5, &N_var FCONE FCONE); //t(X) %*% ((1 - rho1) * diag(N.sub) + (rho1 - rho2) * U %*% solve(t(U) %*% U) %*% t(U)) %*% X
+  F77_CALL(dgemm)("N", "N", &N_var, &N_comp1, &N_var, &blas_one, temp5, &N_var, A1, &N_var, &blas_zero, G1, &N_var FCONE FCONE); //t(X) %*% ((1 - rho1) * diag(N.sub) + (rho1 - rho2) * U %*% solve(t(U) %*% U) %*% t(U)) %*% X %*% A1
 
   /* G2を求める */
-  dgemm_("T", "N", &N_var, &N_var, &N_sub, &blas_one, X, &N_sub, X, &N_sub, &blas_zero, temp5, &N_var); //t(X) %*% X
-  dgemm_("N", "N", &N_var, &N_comp2, &N_var, &blas_one, temp5, &N_var, A2, &N_var, &blas_zero, G2, &N_var); //t(X) %*% X %*% A2
+  F77_CALL(dgemm)("T", "N", &N_var, &N_var, &N_sub, &blas_one, X, &N_sub, X, &N_sub, &blas_zero, temp5, &N_var FCONE FCONE); //t(X) %*% X
+  F77_CALL(dgemm)("N", "N", &N_var, &N_comp2, &N_var, &blas_one, temp5, &N_var, A2, &N_var, &blas_zero, G2, &N_var FCONE FCONE); //t(X) %*% X %*% A2
 
   /* Gを求める */
   for (i = 0; i < N_var; i++) { //G = -2 * cbind(temp1, temp2)
   	for (j = 0; j < N_comp; j++) {
   	  if (j < N_comp1) {
-		G[i + j * N_var] = G1[i + j * N_var];
-	  } else {
-		G[i + j * N_var] = G2[i + (j - N_comp1) * N_var];
-	  }
+	    	G[i + j * N_var] = G1[i + j * N_var];
+	    } else {
+    		G[i + j * N_var] = G2[i + (j - N_comp1) * N_var];
+	    }
   	}
   }
   dscal_(&N_var_comp, &scal_G, G, &inc_dscal);
